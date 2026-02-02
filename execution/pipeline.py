@@ -17,8 +17,10 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from execution.ingestor import get_docx_files
-from execution.converter import batch_convert_to_pdf
-from execution.assembler import merge_pdfs_with_toc
+from execution.converter import batch_convert_to_pdf, convert_docx_to_pdf
+from execution.assembler import merge_pdfs_with_toc, sanitize_bookmark_name
+from execution.toc_generator import generate_toc_docx
+from pypdf import PdfReader
 
 def setup_logging():
     logging.basicConfig(
@@ -52,20 +54,46 @@ def pipeline_orchestrator(input_dir_str: str, output_filename_str: str):
             temp_dir = Path(temp_dir_str)
             logger.info(f"Using staging directory: {temp_dir}")
             
-            # 3. Convert
-            logger.info("Step: Conversion Starting")
+            # 3. Convert Source Docs
+            logger.info("Step: Conversion Starting (Phase 1: Source Docs)")
             converted_pdfs = batch_convert_to_pdf(docx_files, temp_dir)
             
             if not converted_pdfs:
                 logger.error("No files were successfully converted. Exiting.")
                 return 1
             
-            if len(converted_pdfs) < len(docx_files):
-                logger.warning(f"Only {len(converted_pdfs)}/{len(docx_files)} files converted successfully.")
+            # 4. Generate Visual TOC
+            logger.info("Step: Generating Visual TOC")
+            toc_entries = []
+            # Start at page 2 because TOC is page 1
+            current_page = 2 
             
-            # 4. Assemble
+            for pdf_path in converted_pdfs:
+                try:
+                    reader = PdfReader(pdf_path)
+                    num_pages = len(reader.pages)
+                    title = sanitize_bookmark_name(pdf_path.name)
+                    toc_entries.append((title, current_page))
+                    current_page += num_pages
+                except Exception as e:
+                    logger.warning(f"Could not read page count for {pdf_path.name}: {e}")
+
+            toc_docx_path = temp_dir / "00_Table_of_Contents.docx"
+            generate_toc_docx(toc_entries, toc_docx_path)
+            
+            # 5. Convert TOC Doc
+            logger.info("Step: Converting TOC to PDF")
+            try:
+                toc_pdf_path = convert_docx_to_pdf(toc_docx_path, temp_dir)
+                # Prepend TOC to the list of PDFs to merge
+                final_pdf_list = [toc_pdf_path] + converted_pdfs
+            except Exception as e:
+                logger.error(f"Failed to convert TOC: {e}")
+                final_pdf_list = converted_pdfs # Fallback to no TOC
+            
+            # 6. Assemble
             logger.info("Step: Assembly Starting")
-            merge_pdfs_with_toc(converted_pdfs, output_path)
+            merge_pdfs_with_toc(final_pdf_list, output_path)
             
             logger.info("Pipeline completed successfully.")
             return 0
