@@ -1,0 +1,14 @@
+# Core dependencies
+python-dotenv>=1.0.0
+
+# PDF Manipulation
+pypdf>=4.0.0
+
+# Windows Integration
+pywin32>=306
+
+# Data/Doc processing
+python-docx>=1.1.0
+requests>=2.31.0
+
+# Add other dependencies as needed
